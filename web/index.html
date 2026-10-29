@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#07070c" />
+    <title>Luckydraw · 幸运大转盘</title>
+    <meta name="description" content="转动命运的转盘，好运不设上限。" />
+    <meta property="og:title" content="Luckydraw · 幸运大转盘" />
+    <meta property="og:description" content="转动命运的转盘，好运不设上限。" />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <script>
+      // 首屏前定好主题，避免闪一下白/黑
+      try {
+        var t = localStorage.getItem('ld.theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.dataset.theme = t;
+      } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

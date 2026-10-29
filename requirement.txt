@@ -1,0 +1,222 @@
+抽奖系统 Action Item 拆解
+0. 技术选型（先拍板）
+层	选择	理由
+前端	Vite + React（或 Vue）+ React Router	用户端和后台共用一个工程，路由区分 /admin
+后端	Node + Express（或 Fastify）	轻量够用
+数据库	SQLite + Prisma（后期可换 PostgreSQL）	零配置，开发快
+认证	JWT + bcrypt	用户和管理员用 role 区分
+校验	zod	前后端共用 schema
+
+建议 monorepo：/server、/web，根目录用 npm workspaces。
+
+1. 数据模型设计
+User：id、username/email、passwordHash、role（user / admin）、createdAt
+Lottery（抽奖活动）：id、title、description、status（draft / active / ended）、startAt、endAt、shareCode、maxDrawsPerUser、createdBy
+Prize（奖品）：id、lotteryId、name、level（一等奖、二等奖…）、totalCount、remainingCount、probability 或 weight、image
+DrawRecord（抽奖记录）：id、lotteryId、userId、prizeId（null 表示未中奖）、createdAt；给 (lotteryId, userId) 加唯一索引以限制次数
+2. 后端 Action Items
+
+2.1 项目初始化
+
+ 初始化 server，配置 TS、ESLint、dotenv
+ 接入 Prisma，写 schema 并 migrate
+ 统一错误处理中间件、请求日志、CORS
+
+2.2 认证模块
+
+ POST /api/auth/register（密码 bcrypt 加密，校验用户名唯一）
+ POST /api/auth/login（返回 JWT）
+ GET /api/auth/me
+ 中间件：requireAuth、requireAdmin
+ seed 脚本：创建默认管理员账号
+
+2.3 后台管理 API（admin）
+
+ 抽奖活动 CRUD：/api/admin/lotteries
+ 奖品 CRUD：/api/admin/lotteries/:id/prizes（名称、等级、数量、概率）
+ 修改奖品数量（增减库存，已开始的活动要限制修改规则）
+ 发起抽奖：POST /api/admin/lotteries/:id/publish（状态改为 active，生成 shareCode）
+ 结束抽奖：POST /api/admin/lotteries/:id/end
+ 查看中奖名单：GET /api/admin/lotteries/:id/records
+ 发布前校验：至少有一个奖品、概率总和合法
+
+2.4 用户端 API
+
+ GET /api/lotteries/share/:shareCode：通过分享链接获取活动详情（公开，无需登录也能看）
+ POST /api/lotteries/:id/draw：执行抽奖（需登录）
+ GET /api/lotteries/:id/my-result：我的抽奖结果
+ GET /api/me/records：我的所有中奖记录
+
+2.5 抽奖核心逻辑（重点）
+
+ 加权随机算法：按奖品权重 + "未中奖"权重抽取
+ 库存扣减必须在数据库事务里完成，用 UPDATE ... SET remaining = remaining - 1 WHERE remaining > 0 防止超发
+ 抽中但库存已空时的降级处理（重抽或判未中奖）
+ 校验：活动状态、时间范围、用户已抽次数
+ 防重复提交：唯一索引 + 接口幂等
+ 用 crypto.randomInt 代替 Math.random 保证公平
+3. 前端 Action Items
+
+3.1 项目初始化
+
+ Vite 创建项目，配置 proxy 到后端 /api
+ 引入路由、UI 库（Ant Design / Element Plus / shadcn 任选）、请求库（axios + TanStack Query）
+ 封装 axios 拦截器（自动带 token、401 跳登录）
+ 全局登录态管理 + 路由守卫（RequireAuth、RequireAdmin）
+
+3.2 用户端页面
+
+ 登录 / 注册页
+ 抽奖活动页 /l/:shareCode：展示活动信息、奖品列表、剩余数量
+ 未登录点击"参与"时跳转登录，登录后回跳原活动页（带 redirect 参数）
+ 抽奖交互：九宫格或转盘动画 + 结果弹窗
+ 我的中奖记录页
+
+3.3 后台管理页面
+
+ 后台布局（侧边栏 + 顶栏）
+ 活动列表页（状态筛选、创建入口）
+ 活动创建 / 编辑表单（标题、时间、每人抽奖次数）
+ 奖品管理（动态增删行：名称、等级、数量、概率、图片）
+ "发起抽奖"按钮 + 二次确认
+ 分享面板：展示链接、一键复制、二维码（qrcode 库）
+ 中奖名单页（表格 + 导出 CSV）
+4. 分享链接
+ 发布活动时生成短 shareCode（nanoid，8 位左右）
+ 链接格式：https://域名/l/{shareCode}
+ 前端复制按钮 + 二维码
+ 可选：活动页设置 Open Graph meta，让链接在微信等平台预览更好看
+5. 安全与健壮性
+ 接口限流（express-rate-limit），登录和抽奖接口重点限制
+ 所有输入 zod 校验
+ Helmet 安全头
+ 抽奖结果只在服务端决定，前端动画只做展示
+ 管理接口全部走 requireAdmin，别只靠前端隐藏入口
+6. 测试与部署
+ 抽奖逻辑单元测试：概率分布、库存边界
+ 并发测试：100 个并发请求抢 10 个奖品，确认不超发
+ 核心接口集成测试（vitest + supertest）
+ 生产构建：Vite build 出静态文件，由 Node 托管或 Nginx 反代
+ Dockerfile + 环境变量说明 + README
+建议的实施顺序
+第 1 步：项目骨架 + 数据库 + 注册登录（打通认证）
+第 2 步：后台活动与奖品 CRUD + 发布 + 分享链接
+第 3 步：抽奖核心接口（事务、并发安全）
+第 4 步：用户端活动页 + 抽奖交互
+第 5 步：中奖记录、导出、限流等完善
+第 6 步：测试、部署
+
+根据新需求更新后的设计与 Action Item
+
+先说明我对几条需求的理解，有出入请直接指出。
+
+需求	我的理解
+每人一次	每个用户在一个活动里同一时间只能有一条有效中奖记录
+撤回重新抽奖	仅管理员可撤回某条结果：奖品退回库存，该用户可重新抽一次。用户不能自己撤回，否则会反复刷到好奖品
+概率按剩余数量均分	概率不存库，实时计算：P(奖品i) = remaining_i / Σremaining
+灵活增减奖项	活动进行中也能加奖品、改数量、下架奖品，且不影响已产生的记录，不超发
+1. 数据模型调整
+
+Prize
+
+去掉 probability 字段，概率由 remaining 实时算出
+totalCount、remainingCount、status（active / disabled）、version（乐观锁）
+level（排序和展示用）、sortOrder
+
+Participation（参与关系）：新增，核心约束表
+
+(lotteryId, userId) 唯一索引
+currentRecordId：当前有效记录，被撤回后置 null
+这样"每人一次"由这张表保证，撤回后重抽也不用动唯一索引
+
+DrawRecord（只增不改的历史流水）
+
+status：won / claimed（已兑奖）/ revoked
+prizeNameSnapshot、prizeLevelSnapshot：抽中时冗余快照，之后奖品改名、改等级、删除都不影响历史
+revokedBy、revokedAt、revokeReason
+
+AdminOperationLog：谁在什么时候对什么做了什么（含 before/after JSON），出现异常时能追溯
+
+有个产品细节要你拍板：按剩余数量均分的话，只要奖品没发完，每个人必中。如果想保留"谢谢参与"，建议把它做成一种特殊奖品（type = none，也有数量），奖池总量就等于预期参与人数。要不要加？
+
+2. 抽奖核心流程（重点）
+
+POST /api/lotteries/:id/draw 在一个事务内完成：
+
+校验活动 active、在时间范围内、用户已登录
+插入或读取 Participation，如果 currentRecordId 不为空，返回 409"已参与"
+读取所有 status=active AND remaining>0 的奖品；为空则返回"奖品已抽完"
+crypto.randomInt(0, totalRemaining) 按剩余数量加权选中奖品
+条件扣库存：UPDATE prize SET remaining = remaining - 1 WHERE id = ? AND remaining > 0 AND status = 'active'
+如果影响行数为 0（被并发抢走或被管理员下架），回到第 3 步重选，最多重试 3 到 5 次
+写入 DrawRecord（含快照），更新 Participation.currentRecordId
+
+关键点：库存正确性靠"条件更新"保证，不靠先查后改，所以并发和管理员中途改库存都不会超发。接口支持 Idempotency-Key，防止双击。
+
+3. 撤回重抽
+
+POST /api/admin/records/:id/revoke，事务内完成：
+
+ 只允许撤回 status = won 的记录；claimed 需先取消兑奖，否则拒绝
+ 活动已 ended 则拒绝（或提供"重新开启活动"的显式操作）
+ 记录置为 revoked，写入操作人和原因
+ 库存回补：remaining + 1
+如果奖品已被删除或下架，不回补，只在日志里注明
+回补后 remaining 不能超过 totalCount
+ Participation.currentRecordId 置 null，用户可再抽一次
+ 写操作日志
+ 可选开关：重抽时排除刚撤回的那个奖品，避免同一奖品又被抽回
+4. 灵活增减奖项与异常处理
+操作	规则
+新增奖品	草稿和进行中都允许，立即进入奖池，概率自动重算
+增加数量	total += n，remaining += n
+减少数量	新总数不能小于已发出数（total - remaining）；用条件更新 remaining = remaining - n WHERE remaining >= n，不足则报错并提示"需先撤回 X 条中奖记录"
+修改名称、等级	允许；历史记录用快照，不受影响
+删除奖品	无人中奖则可物理删除；已有中奖记录则只能下架（disabled），停止出奖，历史保留
+全部奖品抽完	用户端显示"已抽完"；管理端提示；可配置"抽完自动结束活动"；之后管理员补货，用户可继续抽
+活动已结束	锁定奖品和记录，只读
+并发冲突	管理端编辑用 version 乐观锁，冲突时提示"数据已被修改，请刷新"
+
+异常场景测试清单
+
+ 抽奖过程中管理员下架该奖品，用户应重选而不是报错
+ 100 个并发抢 10 个奖品，不超发，也没人重复参与
+ 减少数量低于已发出数，应拒绝
+ 撤回后回补库存，用户可重抽，历史记录完整
+ 同一用户双击、多标签页同时抽，只产生一条有效记录
+ 奖池为空时抽奖，返回明确提示而不是 500
+ 撤回时奖品已被删除，不报错
+5. 新增或调整的接口与页面
+
+后端
+
+ POST /api/admin/records/:id/revoke
+ PATCH /api/admin/prizes/:id（改数量，做边界校验）
+ POST /api/admin/prizes/:id/disable（下架）
+ GET /api/admin/lotteries/:id/stats：每个奖品的总数、已发、剩余、当前中奖概率
+ GET /api/admin/logs?lotteryId=：操作日志
+ 公开接口返回奖品剩余数量（概率可由前端算出，也可直接返回）
+
+后台页面
+
+ 奖品管理表格增加"已发 / 剩余 / 当前概率"列
+ 数量编辑支持加减，改动前展示校验提示
+ 中奖名单页每行增加"撤回"按钮（二次确认 + 填写原因）
+ 操作日志页
+
+用户端
+
+ 抽过后展示结果；被撤回后页面状态变回"可抽奖"，并提示"您的结果已被管理员撤回，可重新抽取"
+ 奖池为空、活动结束、未开始等状态的提示
+6. 调整后的实施顺序
+项目骨架 + Prisma schema（含 Participation、快照、日志）+ 注册登录
+后台活动和奖品 CRUD（含数量增减规则）+ 发布 + 分享链接
+抽奖核心事务 + 并发测试（最关键，先把它做稳）
+撤回重抽 + 操作日志
+用户端活动页 + 抽奖动画
+统计、导出、限流、部署
+
+
+
+需要"谢谢参与"这种未中奖选项
+撤回只由管理员操作

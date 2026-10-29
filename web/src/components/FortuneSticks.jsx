@@ -1,0 +1,7 @@
+﻿import React,{forwardRef,useImperativeHandle,useRef,useState,useEffect} from 'react';
+const FortuneSticks=forwardRef(function FortuneSticks({prizes,onSpin,disabled,buttonLabel,buttonSub},ref){
+ const [phase,setPhase]=useState('idle'),[chosen,setChosen]=useState(null);const timer=useRef(),resolve=useRef();
+ useEffect(()=>()=>{clearTimeout(timer.current);resolve.current?.();},[]);
+ useImperativeHandle(ref,()=>({spinTo(id){setChosen(prizes.find(p=>p.id===id));setPhase('shaking');return new Promise(done=>{resolve.current=done;timer.current=setTimeout(()=>{setPhase('reveal');timer.current=setTimeout(()=>{done();resolve.current=null;},900);},2000);});}}),[prizes]);
+ return <div className={`fortune-scene ${phase}`}><div className="fortune-eyebrow">一签一遇 · 好运将至</div><h2>摇一支属于你的幸运签</h2><p className="muted">心里默念一个愿望，看看今天的惊喜</p><div className="fortune-object"><div className="fortune-sticks">{Array.from({length:9},(_,i)=><i key={i} style={{'--tilt':`${(i-4)*5}deg`,'--offset':`${(i-4)*19}px`,'--lift':`${i%3*12}px`}} />)}</div><div className="fortune-selected" aria-live="polite">{phase==='reveal'?chosen?.name:'好运'}</div><div className="fortune-cup"><span>签</span></div></div><button className="fortune-button" disabled={disabled} onClick={()=>{setPhase('idle');setChosen(null);onSpin();}}>{buttonLabel==='开始抽奖'?'摇 签':buttonLabel}</button><p className="hint">{buttonSub}</p></div>;
+});export default FortuneSticks;
